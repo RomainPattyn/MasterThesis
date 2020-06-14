@@ -1,0 +1,13 @@
+mri_sobel_ksize 3
+min_average_displacement 0.5
+edge_gradient_threshold_0_10 3
+minimum_edge_size 30
+max_angle 35
+shift_for_mean_ct_gradient 3
+nbr_sample_for_mean_ct_gradient 10
+ct_threshold 500
+closing_big 3
+minimum_blob_size_closing_big 30
+closing_small 1
+minimum_blob_size_closing_small 20
+number_groups 8
