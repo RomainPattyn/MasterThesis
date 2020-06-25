@@ -11,15 +11,11 @@ import numpy as np
 
 LOADING_BAR_CST = 5
 PYFLOW_PATH = "/Users/rompat/Documents/MesFichiers/Universite/Master/M2/Memoire/Project/lib"
-PATH_TO_PROJECT = os.path.dirname(os.path.abspath(__file__)) + "/data/"
+PATH_TO_PROJECT = os.path.dirname(os.path.abspath(__file__)) + "/example/data/"
 
 
 class FlowMemory:
     def __init__(self, images, unique_identifier, method="farneback"):
-        if method == "brox":
-            sys.path.append(
-                os.path.abspath(PYFLOW_PATH + "/pyflow"))
-            import pyflow
         self.ref_img = images[0]
         self.flow_to_first_file = PATH_TO_PROJECT + "flow_to_first_brox_" + unique_identifier + ".pkl"
         self.flow_consecutives_file = PATH_TO_PROJECT + "flow_consecutives_brox_" + unique_identifier + ".pkl"
@@ -34,14 +30,17 @@ class FlowMemory:
                                                      flags=0), axis=2) for img in images[1:]]
             self.flow_consecutives = [np.flip(
                 cv2.calcOpticalFlowFarneback(prev=images[i], next=images[i + 1], flow=None, pyr_scale=0.5, levels=2,
-                                             winsize=7, iterations=3, poly_n=5, poly_sigma=1.1, flags=0), axis=2) for i
-                in range(len(images) - 1)]
+                                             winsize=7, iterations=3, poly_n=5, poly_sigma=1.1, flags=0), axis=2)
+                for i in range(len(images) - 1)]
         elif method == 'brox':
             if os.path.exists(self.flow_to_first_file) and os.path.exists(self.flow_consecutives_file):
+                print("yep")
                 # -1 because if we have a sequence of images of length D we will only be able to compute D-1 flows
                 self.flow_to_first = pickle.load(open(self.flow_to_first_file, 'rb'))[:len(images) - 1]
                 self.flow_consecutives = pickle.load(open(self.flow_consecutives_file, 'rb'))[:len(images) - 1]
             else:
+                sys.path.append(os.path.abspath(PYFLOW_PATH + "/pyflow"))
+                import pyflow
                 alpha = 0.012
                 ratio = 0.75
                 minWidth = 20

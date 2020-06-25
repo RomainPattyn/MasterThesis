@@ -5,7 +5,7 @@ minimum_edge_size 30
 max_angle 35
 shift_for_mean_ct_gradient 3
 nbr_sample_for_mean_ct_gradient 10
-ct_threshold 500
+ct_threshold 300
 closing_big 3
 minimum_blob_size_closing_big 30
 closing_small 1

@@ -79,7 +79,6 @@ def Generate_Image_Folder(folder_path):
                                             mr) + ".png")
         break
 
-
 def GET_IMAGES(data_path, mr=2, ct=4):
     if data_path.endswith(".p"):
         max_bytes = 2 ** 31 - 1
@@ -96,19 +95,36 @@ def GET_IMAGES(data_path, mr=2, ct=4):
         print("Data format not correct, please select a .p file")
 
 
-def GET_NAVIGATORS(MRI_images, CT_images, identifier="None", return_regions_mask=False, show_figures=False, save_images=False):
+def GET_NAVIGATORS(MRI_images, CT_images, identifier="None", return_regions_mask=False, show_figures=False, save_images=False,
+                   flow_method='farneback', number_groups=None):
     process = ImageProcessing(MRI_images, CT_images, identifier=identifier, show_figures=show_figures, print_details=False,
-                              flow_method='farneback', save_images=save_images)
-    X = process.get_navigators(return_regions_mask=return_regions_mask)
+                              flow_method=flow_method, save_images=save_images)
+    X = process.get_navigators(return_regions_mask=return_regions_mask, number_groups=number_groups)
     return X
 
 
-def GET_REGIONS(MRI_images, CT_images, identifier="None", show_figures=False, save_images=False):
+def GET_REGIONS(MRI_images, CT_images, identifier="None", show_figures=False, save_images=False, flow_method='farneback',
+                number_groups=None):
     process = ImageProcessing(MRI_images, CT_images, identifier=identifier, show_figures=show_figures, print_details=False,
-                              flow_method='farneback', save_images=save_images)
-    X = process.region_selection_phase()
+                              flow_method=flow_method, save_images=save_images)
+    X = process.region_selection_phase(number_groups)
     return X
 
+
+def SHOW_NAVIGATORS(REF_IMG, navigators_coordinates, mask_labels=None):
+    opacity = 0.6
+    ref_img = cv2.cvtColor(REF_IMG, cv2.COLOR_GRAY2RGB)
+    img = ref_img.copy()
+    if mask_labels is not None:
+        h, w = np.argwhere(mask_labels > 0).T
+        img[h, w] = np.array([173, 255, 47])
+        img = cv2.addWeighted(img, opacity, ref_img, 1 - opacity, 0)
+    plt.figure(figsize=(10, 20))
+    plt.axis("off")
+    for p0, p1 in navigators_coordinates:
+        cv2.line(img, (p0[0], p0[1]), (p1[0], p1[1]), (250, 0, 0), 1)
+    # plt.imsave(PATH_TO_SAVE_IMAGES + "example_step_5.png", img, dpi=600)
+    plt.imshow(img)
 
 class ImageProcessing:
     """
@@ -194,15 +210,16 @@ class ImageProcessing:
             ct_index_seq.append(best_index)
         return ct_seq, ct_index_seq
 
-    def get_navigators(self, show_region_properties=True, return_regions_mask=False):
+    def get_navigators(self, number_groups=None, show_region_properties=False, return_regions_mask=False):
         """
+        :param number_groups:
         :param show_region_properties: (boolean) True if we want to show the regions, False otherwise
         :return: a list of elements composed of two coordinates representing the starting and end point of the
         navigators in the form : [[(w1, h1),(w2, h2)], ...]
         """
         # Selection of the interesting regions
         s = time.time()
-        mask_labels, points = self.region_selection_phase()
+        mask_labels, points = self.region_selection_phase(number_groups)
         e = round(time.time() - s, 2)
         regions = regionprops(mask_labels)
         self.print_if_wanted("Region Selection Phase : \t\t Elapsed time :" + str(e) + "\n")
@@ -217,18 +234,6 @@ class ImageProcessing:
         navigators_coordinates = self.navigators_positioning_phase_2(mask_labels)
         e = round(time.time() - s, 2)
 
-        h, w = np.argwhere(mask_labels > 0).T
-        if self.save_images:
-            opacity = 0.6
-            ref_img = cv2.cvtColor(self.Images[0], cv2.COLOR_GRAY2RGB)
-            img = ref_img.copy()
-            img[h, w] = np.array([173, 255, 47])
-            img = cv2.addWeighted(img, opacity, ref_img, 1 - opacity, 0)
-            plt.figure(figsize=(10, 20))
-            for p0, p1 in navigators_coordinates:
-                cv2.line(img, (p0[0], p0[1]), (p1[0], p1[1]), (250, 0, 0), 1)
-            plt.imsave(PATH_TO_SAVE_IMAGES + "example_step_5.png", img, dpi=600)
-            plt.imshow(img)
         self.print_if_wanted("Navigators Positioning Phase : \t\t Elapsed time :" + str(e) + "\n")
         if return_regions_mask:
             return navigators_coordinates, mask_labels
@@ -238,7 +243,7 @@ class ImageProcessing:
     # -------------------------------------------- Regions Selection Phase --------------------------------------------
     # -----------------------------------------------------------------------------------------------------------------
 
-    def region_selection_phase(self):
+    def region_selection_phase(self, number_groups):
         """
         :return:    - a mask that contains a unique label for pixels belonging to the same edge
                     - a mask containing the mean angle differences per interest point
@@ -266,7 +271,7 @@ class ImageProcessing:
         mask_ct_edge_ok = self.step_3_filter_non_ct_edges(mask_step_2, 'light_green')
 
         # STEP 4 : Blob Size Thresholding
-        mask_labels, mask_size_ok, points = self.step_4_filter_blob_size(mask_ct_edge_ok, 'light_green')
+        mask_labels, mask_size_ok, points = self.step_4_filter_blob_size(mask_ct_edge_ok, number_groups, 'light_green')
 
         maks_grad_ang_1 = np.mod(np.where(mask_labels > 0, self.mean_gradient_angle_MRI, 0), 180)
         binary_mask = np.where(mask_labels > 0, 1, 0).astype(float)
@@ -305,30 +310,47 @@ class ImageProcessing:
         if self.save_images:
             opacity = 0.6
             ref_img = cv2.cvtColor(self.Images[0], cv2.COLOR_GRAY2RGB)
-            plt.imsave(PATH_TO_SAVE_IMAGES + "example_step_0.png", ref_img, dpi=600)
+            my_dpi = 192
+            plt.figure(figsize=(800 / my_dpi, 800 / my_dpi), dpi=my_dpi)
+            plt.imshow(ref_img)
+            plt.axis("off")
+            plt.savefig(PATH_TO_SAVE_IMAGES + "example_step_0.png", dpi=my_dpi*10, bbox_inches="tight")
+            plt.close()
 
             img = ref_img.copy()
             img[h, w] = np.array([173, 255, 47])
-            plt.imsave(PATH_TO_SAVE_IMAGES + "example_step_1.png",
-                       cv2.addWeighted(img, opacity, ref_img, 1 - opacity, 0), dpi=600)
+            plt.figure(figsize=(800 / my_dpi, 800 / my_dpi), dpi=my_dpi)
+            plt.imshow(cv2.addWeighted(img, opacity, ref_img, 1 - opacity, 0))
+            plt.axis("off")
+            plt.savefig(PATH_TO_SAVE_IMAGES + "example_step_1.png", dpi=my_dpi, bbox_inches="tight")
+            plt.close()
 
             h2, w2 = np.argwhere(mask_step_2 > 0).T
             img = ref_img.copy()
             img[h2, w2] = np.array([173, 255, 47])
-            plt.imsave(PATH_TO_SAVE_IMAGES + "example_step_2.png",
-                       cv2.addWeighted(img, opacity, ref_img, 1 - opacity, 0), dpi=600)
+            plt.figure(figsize=(800 / my_dpi, 800 / my_dpi), dpi=my_dpi)
+            plt.imshow(cv2.addWeighted(img, opacity, ref_img, 1 - opacity, 0))
+            plt.axis("off")
+            plt.savefig(PATH_TO_SAVE_IMAGES + "example_step_2.png", dpi=my_dpi, bbox_inches="tight")
+            plt.close()
 
             h3, w3 = np.argwhere(mask_ct_edge_ok > 0).T
             img = ref_img.copy()
             img[h3, w3] = np.array([173, 255, 47])
-            plt.imsave(PATH_TO_SAVE_IMAGES + "example_step_3.png",
-                       cv2.addWeighted(img, opacity, ref_img, 1 - opacity, 0), dpi=600)
+            plt.figure(figsize=(800 / my_dpi, 800 / my_dpi), dpi=my_dpi)
+            plt.imshow(cv2.addWeighted(img, opacity, ref_img, 1 - opacity, 0))
+            plt.axis("off")
+            plt.savefig(PATH_TO_SAVE_IMAGES + "example_step_3.png", dpi=my_dpi, bbox_inches="tight")
+            plt.close()
 
             h4, w4 = np.argwhere(mask_size_ok > 0).T
             img = ref_img.copy()
             img[h4, w4] = np.array([173, 255, 47])
-            plt.imsave(PATH_TO_SAVE_IMAGES + "example_step_4.png",
-                       cv2.addWeighted(img, opacity, ref_img, 1 - opacity, 0), dpi=600)
+            plt.figure(figsize=(800 / my_dpi, 800 / my_dpi), dpi=my_dpi)
+            plt.imshow(cv2.addWeighted(img, opacity, ref_img, 1 - opacity, 0))
+            plt.axis("off")
+            plt.savefig(PATH_TO_SAVE_IMAGES + "example_step_4.png", dpi=my_dpi*10, bbox_inches="tight")
+            plt.close()
 
         # angle_errors_counts = [(a_e <= 90).astype(int) for a_e in angle_errors]
         # self.number_changements = [np.sum(np.absolute(angle_errors_1_counts[i] - angle_errors_1_counts[i + 1])) for i in range(len(angle_errors_1_counts) - 1)]
@@ -353,6 +375,7 @@ class ImageProcessing:
         cumulative_gradients_mag = gradients_magnitudes[0].copy()
         cumulative_gradients_angles = gradients_angles[0].copy()
         cumulative_gradients_mag_ct = self.ct_loop_gradients_magnitudes[self.ct_mi_mri_seq_index[0]].copy()
+
         for idx, (h, w) in enumerate(self.Flow_Memory.get_coordinates_after_flow()):
             cumulative_gradients_mag += gradients_magnitudes[idx + 1][h, w]
             cumulative_gradients_angles += gradients_angles[idx + 1][h, w]
@@ -361,7 +384,12 @@ class ImageProcessing:
         cumulative_gradients_angles /= len(gradients_angles)
         cumulative_gradients_mag_ct /= len(self.ct_mi_mri_seq_index)
         self.mean_gradient_angle_MRI = cumulative_gradients_angles
-
+        """
+        for i in range(10):
+            plt.imsave(PATH_TO_SAVE_IMAGES + "grad_mag_" + str(i) + ".png", gradients_magnitudes[i], dpi=600, cmap=plt.cm.gray)
+            plt.imsave(PATH_TO_SAVE_IMAGES + "grad_orig_" + str(i) + ".png", self.Images[i], dpi=600, cmap=plt.cm.gray)
+        plt.imsave(PATH_TO_SAVE_IMAGES + "grad_disp_mask.png", np.where(cumulative_gradients_mag < 30, 1, 0), dpi=600, cmap=plt.cm.gray)
+        """
         # Showing the parts that are kept and rejected with different thresholds on the mean movement amplitude
         if self.show_figures and show_edges_movement_thresholds:
             thresholds = [0.6, 0.4, 0.2]
@@ -506,7 +534,7 @@ class ImageProcessing:
         self.VideoViewer.add_layer('following_points', points, opacity=1, color=color)
         return new_mask
 
-    def step_4_filter_blob_size(self, mask_ct_edge_ok, color):
+    def step_4_filter_blob_size(self, mask_ct_edge_ok, number_groups, color):
 
         # Proceding to a closing of size 4 (which is considered to be big), it will regroup groups that are closer than
         # 4 pixels of one to each other. Then we threshold the groups on their sizes
@@ -535,7 +563,8 @@ class ImageProcessing:
 
         final_labels = label(np.where(mask_after_closing > 0, 1, 0))
         group_sizes = [(region, region.area) for region in regionprops(final_labels)]
-        number_groups = self.external_variables["number_groups"]
+        if number_groups is None:
+            number_groups = self.external_variables["number_groups"]
         res = sorted(group_sizes, key=lambda i: i[1])
         for region, area in res[:-number_groups]:
             h, w = zip(*region.coords)
@@ -591,7 +620,7 @@ class ImageProcessing:
     # ------------------------------------------ Navigators Positioning Phase -----------------------------------------
     # -----------------------------------------------------------------------------------------------------------------
 
-    def navigators_positioning_phase_2(self, mask_labels):
+    def navigators_positioning_phase_22(self, mask_labels):
         res = []
         navigator_length = 10
         for region in regionprops(mask_labels):
@@ -603,6 +632,66 @@ class ImageProcessing:
             h2 = h0 + math.sin(orientation) * 0.5 * navigator_length
             res.append([(np.int32(w1 + 0.5), np.int32(h1 + 0.5)), (np.int32(w2 + 0.5), np.int32(h2 + 0.5))])
         self.VideoViewer.add_layer('navigators', res, color='yellow')
+        print(res)
+        return res
+
+    def navigators_positioning_phase_2(self, mask_labels):
+        navigator_length = 15
+        H, W = zip(*[region.centroid for region in regionprops(mask_labels)])
+        H = [int(hh+0.5) for hh in H]
+        W = [int(ww+0.5) for ww in W]
+        all_h = [H]
+        all_w = [W]
+        nbr_pts = len(H)
+        for hh, ww in self.Flow_Memory.get_coordinates_after_flow(coordinates=(H, W)):
+            all_h.append(hh)
+            all_w.append(ww)
+
+        all_h = np.array(all_h).T
+        all_w = np.array(all_w).T
+        mean_h = np.mean(all_h, axis=1).reshape((nbr_pts, 1))
+        mean_w = np.mean(all_w, axis=1).reshape((nbr_pts, 1))
+
+        orientations = np.array([region.orientation for region in regionprops(mask_labels)])
+
+        v_h = np.cos(orientations).reshape((nbr_pts, 1))
+        v_w = np.sin(orientations).reshape((nbr_pts, 1))
+
+        # Projecting the points on the line that intersects the mean coordinate and that has an angle corresponding
+        # to the gradient direction
+        dot_prod = (all_h - mean_h) * v_h + (all_w - mean_w) * v_w
+        pp_h = dot_prod * v_h
+        pp_w = dot_prod * v_w
+
+        # Rotating the data so that we don't need to compute the distances but can simply look at the maximum and
+        # minimums taken by a point during the sequence
+        cos_rot = np.cos(-orientations).reshape((nbr_pts, 1))
+        sin_rot = np.sin(-orientations).reshape((nbr_pts, 1))
+        rot_h = pp_h * cos_rot - pp_w * sin_rot
+
+        # Computing the mean extrema of each interest point
+        nbr_extrema = 3
+        max_extrema_mean = np.mean(np.partition(rot_h, -nbr_extrema, axis=1)[:, -nbr_extrema:], axis=1)
+        min_extrema_mean = np.mean(-np.partition(-rot_h, -nbr_extrema, axis=1)[:, -nbr_extrema:], axis=1)
+        distances = max_extrema_mean - min_extrema_mean
+
+        """
+        factor = 3
+        res = [[(int(w0 + math.cos(orientation) * 0.5 * dist * factor + 0.5),
+                 int(h0 - math.sin(orientation) * 0.5 * dist * factor + 0.5)),
+                (int(w0 - math.cos(orientation) * 0.5 * dist * factor + 0.5),
+                 int(h0 + math.sin(orientation) * 0.5 * dist * factor + 0.5))]
+               for orientation, h0, w0, dist in zip(orientations, mean_h, mean_w, distances)]
+        """
+
+        res = [[(int(w0 + math.cos(orientation) * 0.5 * navigator_length + 0.5),
+                 int(h0 - math.sin(orientation) * 0.5 * navigator_length + 0.5)),
+                (int(w0 - math.cos(orientation) * 0.5 * navigator_length + 0.5),
+                 int(h0 + math.sin(orientation) * 0.5 * navigator_length + 0.5))]
+               for orientation, h0, w0 in zip(orientations, mean_h, mean_w)]
+
+        self.VideoViewer.add_layer('navigators', res, color='yellow')
+        print(res)
         return res
 
     def navigators_positioning_phase(self, mask_labels, points, show_projected_distance=False):
